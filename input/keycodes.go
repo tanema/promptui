@@ -1,6 +1,6 @@
 // +build !windows
 
-package promptui
+package input
 
 import "github.com/chzyer/readline"
 

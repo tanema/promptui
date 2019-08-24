@@ -1,16 +1,15 @@
-package promptui
+package input
 
 import (
 	"bytes"
 	"fmt"
 	"io"
 	"os"
-	"text/template"
 
 	"github.com/chzyer/readline"
-	"github.com/juju/ansiterm"
-	"github.com/manifoldco/promptui/list"
-	"github.com/manifoldco/promptui/screenbuf"
+	"github.com/tanema/promptui/frmt"
+	"github.com/tanema/promptui/list"
+	"github.com/tanema/promptui/screenbuf"
 )
 
 // SelectedAdd is used internally inside SelectWithAdd when the add option is selected in select mode.
@@ -119,13 +118,13 @@ type Key struct {
 //
 // This displays the value given to the template as pure, unstylized text. Structs are transformed to string
 // with this notation.
-// 	'{{ . }}'
+//	'{{ . }}'
 //
 // This displays the name property of the value colored in cyan
-// 	'{{ .Name | cyan }}'
+//	'{{ .Name | cyan }}'
 //
 // This displays the label property of value colored in red with a cyan background-color
-// 	'{{ .Label | red | cyan }}'
+//	'{{ .Label | red | cyan }}'
 //
 // See the doc of text/template for more info: https://golang.org/pkg/text/template/
 //
@@ -160,20 +159,6 @@ type SelectTemplates struct {
 	// Help is a text/template for displaying instructions at the top. By default
 	// it shows keys for movement and search.
 	Help string
-
-	// FuncMap is a map of helper functions that can be used inside of templates according to the text/template
-	// documentation.
-	//
-	// By default, FuncMap contains the color functions used to color the text in templates. If FuncMap
-	// is overridden, the colors functions must be added in the override from promptui.FuncMap to work.
-	FuncMap template.FuncMap
-
-	label    *template.Template
-	active   *template.Template
-	inactive *template.Template
-	selected *template.Template
-	details  *template.Template
-	help     *template.Template
 }
 
 // SearchPrompt is the prompt displayed in search mode.
@@ -208,10 +193,7 @@ func (s *Select) RunCursorAt(cursorPos, scroll int) (int, string, error) {
 
 	s.setKeys()
 
-	err = s.prepareTemplates()
-	if err != nil {
-		return 0, "", err
-	}
+	s.prepareTemplates()
 	return s.innerRun(cursorPos, scroll, ' ')
 }
 
@@ -297,7 +279,7 @@ func (s *Select) innerRun(cursorPos, scroll int, top rune) (int, string, error) 
 			sb.Write(help)
 		}
 
-		label := render(s.Templates.label, s.Label)
+		label := frmt.Render(s.Templates.Label, s.Label)
 		sb.Write(label)
 
 		items, idx := s.list.Items()
@@ -322,9 +304,9 @@ func (s *Select) innerRun(cursorPos, scroll int, top rune) (int, string, error) 
 			output := []byte(page + " ")
 
 			if i == idx {
-				output = append(output, render(s.Templates.active, item)...)
+				output = append(output, frmt.Render(s.Templates.Active, item)...)
 			} else {
-				output = append(output, render(s.Templates.inactive, item)...)
+				output = append(output, frmt.Render(s.Templates.Inactive, item)...)
 			}
 
 			sb.Write(output)
@@ -386,7 +368,7 @@ func (s *Select) innerRun(cursorPos, scroll int, top rune) (int, string, error) 
 		clearScreen(sb)
 	} else {
 		sb.Reset()
-		sb.Write(render(s.Templates.selected, item))
+		sb.Write(frmt.Render(s.Templates.Selected, item))
 		sb.Flush()
 	}
 
@@ -401,66 +383,26 @@ func (s *Select) ScrollPosition() int {
 	return s.list.Start()
 }
 
-func (s *Select) prepareTemplates() error {
+func (s *Select) prepareTemplates() {
 	tpls := s.Templates
 	if tpls == nil {
 		tpls = &SelectTemplates{}
 	}
 
-	if tpls.FuncMap == nil {
-		tpls.FuncMap = FuncMap
-	}
-
 	if tpls.Label == "" {
-		tpls.Label = fmt.Sprintf("%s {{.}}: ", IconInitial)
+		tpls.Label = fmt.Sprintf("{{ iconQ }} {{.}}: ")
 	}
-
-	tpl, err := template.New("").Funcs(tpls.FuncMap).Parse(tpls.Label)
-	if err != nil {
-		return err
-	}
-
-	tpls.label = tpl
 
 	if tpls.Active == "" {
-		tpls.Active = fmt.Sprintf("%s {{ . | underline }}", IconSelect)
+		tpls.Active = fmt.Sprintf("{{ iconSel }} {{ . | underline }}")
 	}
-
-	tpl, err = template.New("").Funcs(tpls.FuncMap).Parse(tpls.Active)
-	if err != nil {
-		return err
-	}
-
-	tpls.active = tpl
 
 	if tpls.Inactive == "" {
 		tpls.Inactive = "  {{.}}"
 	}
 
-	tpl, err = template.New("").Funcs(tpls.FuncMap).Parse(tpls.Inactive)
-	if err != nil {
-		return err
-	}
-
-	tpls.inactive = tpl
-
 	if tpls.Selected == "" {
-		tpls.Selected = fmt.Sprintf(`{{ "%s" | green }} {{ . | faint }}`, IconGood)
-	}
-
-	tpl, err = template.New("").Funcs(tpls.FuncMap).Parse(tpls.Selected)
-	if err != nil {
-		return err
-	}
-	tpls.selected = tpl
-
-	if tpls.Details != "" {
-		tpl, err = template.New("").Funcs(tpls.FuncMap).Parse(tpls.Details)
-		if err != nil {
-			return err
-		}
-
-		tpls.details = tpl
+		tpls.Selected = fmt.Sprintf(`{{ iconGood | green }} {{ . | faint }}`)
 	}
 
 	if tpls.Help == "" {
@@ -469,16 +411,7 @@ func (s *Select) prepareTemplates() error {
 			`{{ if .Search }} {{ "and" | faint }} {{ .SearchKey | faint }} {{ "toggles search" | faint }}{{ end }}`)
 	}
 
-	tpl, err = template.New("").Funcs(tpls.FuncMap).Parse(tpls.Help)
-	if err != nil {
-		return err
-	}
-
-	tpls.help = tpl
-
 	s.Templates = tpls
-
-	return nil
 }
 
 // SelectWithAdd represents a list for selecting a single item inside a list of items with the possibility to
@@ -498,7 +431,7 @@ type SelectWithAdd struct {
 
 	// Validate is an optional function that fill be used against the entered value in the prompt to validate it.
 	// If the value is valid, it is returned to the callee to be added in the list.
-	Validate ValidateFunc
+	Validate func(string) error
 
 	// IsVimMode sets whether to use vim mode when using readline in the command prompt. Look at
 	// https://godoc.org/github.com/chzyer/readline#Config for more information on readline.
@@ -538,10 +471,7 @@ func (sa *SelectWithAdd) Run() (int, string, error) {
 		}
 		s.setKeys()
 
-		err = s.prepareTemplates()
-		if err != nil {
-			return 0, "", err
-		}
+		s.prepareTemplates()
 
 		selected, value, err := s.innerRun(1, 0, '+')
 		if err != nil || selected != 0 {
@@ -576,23 +506,10 @@ func (s *Select) setKeys() {
 }
 
 func (s *Select) renderDetails(item interface{}) [][]byte {
-	if s.Templates.details == nil {
+	if s.Templates.Details == "" {
 		return nil
 	}
-
-	var buf bytes.Buffer
-	w := ansiterm.NewTabWriter(&buf, 0, 0, 8, ' ', 0)
-
-	err := s.Templates.details.Execute(w, item)
-	if err != nil {
-		fmt.Fprintf(w, "%v", item)
-	}
-
-	w.Flush()
-
-	output := buf.Bytes()
-
-	return bytes.Split(output, []byte("\n"))
+	return bytes.Split(frmt.Render(s.Templates.Details, item), []byte("\n"))
 }
 
 func (s *Select) renderHelp(b bool) []byte {
@@ -612,16 +529,7 @@ func (s *Select) renderHelp(b bool) []byte {
 		Search:      b,
 	}
 
-	return render(s.Templates.help, keys)
-}
-
-func render(tpl *template.Template, data interface{}) []byte {
-	var buf bytes.Buffer
-	err := tpl.Execute(&buf, data)
-	if err != nil {
-		return []byte(fmt.Sprintf("%v", data))
-	}
-	return buf.Bytes()
+	return frmt.Render(s.Templates.Help, keys)
 }
 
 func clearScreen(sb *screenbuf.ScreenBuf) {

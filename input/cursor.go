@@ -1,6 +1,24 @@
-package promptui
+package input
 
-import "fmt"
+import (
+	"fmt"
+	"strconv"
+)
+
+const (
+	esc        = "\033["
+	hideCursor = esc + "?25l"
+	showCursor = esc + "?25h"
+	clearLine  = esc + "2K"
+)
+
+func upLine(n uint) string {
+	return movementCode(n, 'A')
+}
+
+func movementCode(n uint, code rune) string {
+	return esc + strconv.FormatUint(uint64(n), 10) + string(code)
+}
 
 // Pointer is A specific type that translates a given set of runes into a given
 // set of runes pointed at by the cursor.

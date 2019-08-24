@@ -1,4 +1,4 @@
-package promptui
+package input
 
 // source: https://msdn.microsoft.com/en-us/library/aa243025(v=vs.60).aspx
 

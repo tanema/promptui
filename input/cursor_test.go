@@ -1,4 +1,4 @@
-package promptui
+package input
 
 import "testing"
 

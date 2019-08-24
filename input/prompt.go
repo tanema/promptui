@@ -1,14 +1,25 @@
-package promptui
+package input
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"strings"
-	"text/template"
 
 	"github.com/chzyer/readline"
-	"github.com/manifoldco/promptui/screenbuf"
+	"github.com/tanema/promptui/frmt"
+	"github.com/tanema/promptui/screenbuf"
 )
+
+// ErrAbort is the error returned when confirm prompts are supplied "n"
+var ErrAbort = errors.New("")
+
+// ErrEOF is the error returned from prompts when EOF is encountered.
+var ErrEOF = errors.New("^D")
+
+// ErrInterrupt is the error returned from prompts when an interrupt (ctrl-c) is
+// encountered.
+var ErrInterrupt = errors.New("^C")
 
 // Prompt represents a single line text field input with options for validation and input masks.
 type Prompt struct {
@@ -27,7 +38,7 @@ type Prompt struct {
 	AllowEdit bool
 
 	// Validate is an optional function that fill be used against the entered value in the prompt to validate it.
-	Validate ValidateFunc
+	Validate func(string) error
 
 	// Mask is an optional rune that sets which character to display instead of the entered characters. This
 	// allows hiding private information like passwords.
@@ -61,13 +72,13 @@ type Prompt struct {
 // the value can be printed with specific helper functions. For example
 //
 // This displays the value given to the template as pure, unstylized text.
-// 	'{{ . }}'
+//	'{{ . }}'
 //
 // This displays the value colored in cyan
-// 	'{{ . | cyan }}'
+//	'{{ . | cyan }}'
 //
 // This displays the value colored in red with a cyan background-color
-// 	'{{ . | red | cyan }}'
+//	'{{ . | red | cyan }}'
 //
 // See the doc of text/template for more info: https://golang.org/pkg/text/template/
 type PromptTemplates struct {
@@ -91,31 +102,13 @@ type PromptTemplates struct {
 	// Prompt is a text/template for the prompt label when the value is invalid due to an error triggered by
 	// the prompt's validation function.
 	ValidationError string
-
-	// FuncMap is a map of helper functions that can be used inside of templates according to the text/template
-	// documentation.
-	//
-	// By default, FuncMap contains the color functions used to color the text in templates. If FuncMap
-	// is overridden, the colors functions must be added in the override from promptui.FuncMap to work.
-	FuncMap template.FuncMap
-
-	prompt     *template.Template
-	valid      *template.Template
-	invalid    *template.Template
-	validation *template.Template
-	success    *template.Template
 }
 
 // Run executes the prompt. Its displays the label and default value if any, asking the user to enter a value.
 // Run will keep the prompt alive until it has been canceled from the command prompt or it has received a valid
 // value. It will return the value and an error if any occurred during the prompt's execution.
 func (p *Prompt) Run() (string, error) {
-	var err error
-
-	err = p.prepareTemplates()
-	if err != nil {
-		return "", err
-	}
+	p.prepareTemplates()
 
 	c := &readline.Config{
 		Stdin:          p.stdin,
@@ -127,7 +120,7 @@ func (p *Prompt) Run() (string, error) {
 		UniqueEditLine: true,
 	}
 
-	err = c.Init()
+	err := c.Init()
 	if err != nil {
 		return "", err
 	}
@@ -161,11 +154,11 @@ func (p *Prompt) Run() (string, error) {
 		var prompt []byte
 
 		if err != nil {
-			prompt = render(p.Templates.invalid, p.Label)
+			prompt = frmt.Render(p.Templates.Invalid, p.Label)
 		} else {
-			prompt = render(p.Templates.valid, p.Label)
+			prompt = frmt.Render(p.Templates.Valid, p.Label)
 			if p.IsConfirm {
-				prompt = render(p.Templates.prompt, p.Label)
+				prompt = frmt.Render(p.Templates.Prompt, p.Label)
 			}
 		}
 
@@ -178,7 +171,7 @@ func (p *Prompt) Run() (string, error) {
 		sb.Reset()
 		sb.Write(prompt)
 		if inputErr != nil {
-			validation := render(p.Templates.validation, inputErr)
+			validation := frmt.Render(p.Templates.ValidationError, inputErr)
 			sb.Write(validation)
 			inputErr = nil
 		}
@@ -223,13 +216,13 @@ func (p *Prompt) Run() (string, error) {
 		echo = cur.FormatMask(p.Mask)
 	}
 
-	prompt := render(p.Templates.success, p.Label)
+	prompt := frmt.Render(p.Templates.Success, p.Label)
 	prompt = append(prompt, []byte(echo)...)
 
 	if p.IsConfirm {
 		lowerDefault := strings.ToLower(p.Default)
 		if strings.ToLower(cur.Get()) != "y" && (lowerDefault != "y" || (lowerDefault == "y" && cur.Get() != "")) {
-			prompt = render(p.Templates.invalid, p.Label)
+			prompt = frmt.Render(p.Templates.Invalid, p.Label)
 			err = ErrAbort
 		}
 	}
@@ -243,17 +236,11 @@ func (p *Prompt) Run() (string, error) {
 	return cur.Get(), err
 }
 
-func (p *Prompt) prepareTemplates() error {
+func (p *Prompt) prepareTemplates() {
 	tpls := p.Templates
 	if tpls == nil {
 		tpls = &PromptTemplates{}
 	}
-
-	if tpls.FuncMap == nil {
-		tpls.FuncMap = FuncMap
-	}
-
-	bold := Styler(FGBold)
 
 	if p.IsConfirm {
 		if tpls.Confirm == "" {
@@ -261,73 +248,29 @@ func (p *Prompt) prepareTemplates() error {
 			if strings.ToLower(p.Default) == "y" {
 				confirm = "Y/n"
 			}
-			tpls.Confirm = fmt.Sprintf(`{{ "%s" | bold }} {{ . | bold }}? {{ "[%s]" | faint }} `, IconInitial, confirm)
+			tpls.Confirm = fmt.Sprintf(`{{ iconQ | bold }} {{ . | bold }}? {{ "[%s]" | faint }} `, confirm)
 		}
-
-		tpl, err := template.New("").Funcs(tpls.FuncMap).Parse(tpls.Confirm)
-		if err != nil {
-			return err
-		}
-
-		tpls.prompt = tpl
 	} else {
 		if tpls.Prompt == "" {
-			tpls.Prompt = fmt.Sprintf("%s {{ . | bold }}%s ", bold(IconInitial), bold(":"))
+			tpls.Prompt = fmt.Sprintf(`{{iconQ | bold }} {{ . | bold }}{{":" | bold}} `)
 		}
-
-		tpl, err := template.New("").Funcs(tpls.FuncMap).Parse(tpls.Prompt)
-		if err != nil {
-			return err
-		}
-
-		tpls.prompt = tpl
 	}
 
 	if tpls.Valid == "" {
-		tpls.Valid = fmt.Sprintf("%s {{ . | bold }}%s ", bold(IconGood), bold(":"))
+		tpls.Valid = fmt.Sprintf(`{{iconGood | bold}} {{ . | bold }}{{":" | bold}} `)
 	}
-
-	tpl, err := template.New("").Funcs(tpls.FuncMap).Parse(tpls.Valid)
-	if err != nil {
-		return err
-	}
-
-	tpls.valid = tpl
 
 	if tpls.Invalid == "" {
-		tpls.Invalid = fmt.Sprintf("%s {{ . | bold }}%s ", bold(IconBad), bold(":"))
+		tpls.Invalid = fmt.Sprintf(`{{ iconBad | bold }} {{ . | bold }}{{":" | bold}} `)
 	}
-
-	tpl, err = template.New("").Funcs(tpls.FuncMap).Parse(tpls.Invalid)
-	if err != nil {
-		return err
-	}
-
-	tpls.invalid = tpl
 
 	if tpls.ValidationError == "" {
 		tpls.ValidationError = `{{ ">>" | red }} {{ . | red }}`
 	}
 
-	tpl, err = template.New("").Funcs(tpls.FuncMap).Parse(tpls.ValidationError)
-	if err != nil {
-		return err
-	}
-
-	tpls.validation = tpl
-
 	if tpls.Success == "" {
-		tpls.Success = fmt.Sprintf("{{ . | faint }}%s ", Styler(FGFaint)(":"))
+		tpls.Success = fmt.Sprintf(`{{ . | faint }}{{":" | faint }}`)
 	}
-
-	tpl, err = template.New("").Funcs(tpls.FuncMap).Parse(tpls.Success)
-	if err != nil {
-		return err
-	}
-
-	tpls.success = tpl
 
 	p.Templates = tpls
-
-	return nil
 }

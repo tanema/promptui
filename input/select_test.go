@@ -1,10 +1,10 @@
-package promptui
+package input
 
 import (
 	"bytes"
 	"testing"
 
-	"github.com/manifoldco/promptui/screenbuf"
+	"github.com/tanema/promptui/screenbuf"
 )
 
 func TestSelectTemplateRender(t *testing.T) {
