@@ -1,16 +1,13 @@
-### Existing
+### TODO
 
-- ask
-- confirm
-- password
-- select/list
-- ?/check/warn/x icons
+- [ ] ask
+- [ ] confirm
+- [ ] password
+- [ ] select/list
+- [x] formmated output
+- [ ] frame (with/without color)
+- [x] spinner
+- [x] spin group
+- [x] progress
 
-### Needed
 
-- formmated output
-- StdoutRouter
-- frame (with/without color)
-- spinner
-- spin group
-- progress
